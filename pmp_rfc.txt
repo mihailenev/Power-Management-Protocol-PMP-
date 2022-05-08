@@ -1,0 +1,424 @@
+﻿Network Working Group                                         V. Virag
+Request for Comments: XXXX                                     M. Enev
+                                                            March 2022
+                  POWER MANAGEMENT PROTOCOL (PMP)
+                  -------------------------------
+
+
+Status of this Memo
+
+
+    This memo is the official specification of the Power Management
+Protocol (PMP). Distribution of this memo is unlimited.
+
+
+1. INTRODUCTION
+---------------
+
+
+     The Power Management Protocol (PMP) is a protocol that allows
+users to remotely monitor and manage a machine's power settings.
+
+
+    The objectives of PMP are: 1) allow users to send and receive
+data securely to and from remote machines, 2) allow fast and efficient
+power management of remote machines.
+
+
+2. OVERVIEW
+-----------
+
+
+    PMP is a half-duplex, stateful, Client-Server  Application layer
+protocol, built on top of UDP [RFC0768] for sending and receiving
+information about battery status, power consumption, as well as
+commands to suspend, reboot or power off a remote machine. The
+protocol utilizes Diffie-Hellman key exchange [RFC2631] to establish a
+shared secret, Advanced Encryption Standard (AES) algorithm [RFC3826]
+to ensure data security and Rivest–Shamir–Adleman (RSA) cryptographic
+keys [RFC8017] for authentication.
+
+
+3. IMPLEMENTATION
+-----------------
+
+
+   The protocol implementations MUST:
+1) Implement PMP as a Client-Server Application layer protocol.
+2) Be built on top of the UDP protocol.
+3) Implement half-duplex data transmission.
+4) Ensure data integrity using the CRC32 algorithm to calculate
+checksums.
+5) Exchange shared secrets using Diffie-Hellman key exchange generated
+with Modular Exponential (MODP) primes [RFC3526].
+5) Ensure data security by encrypting all data (excluding the headers)
+using AES CBC with a block size of 16 and the SHA256 hash of the
+shared secret as key. The Initialization Vector (IV) MUST have a fixed
+size of 16 bytes and MUST be appended to the ciphertext.
+6) Allow users to authenticate using RSA cryptographic keys.
+
+
+    The implementations MAY support Network Address Translation (NAT)
+[RFC2663] punchthrough.
+
+
+    The implementations MUST NOT:
+1) Perform caching.
+2) Implement flow and congestion control.
+                                                            [ Page 1 ]
+
+
+4. FORMAT
+---------
+ 0                   1
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|           Checksum            |
+|                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|S|R|C|A|    Sequence number    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Data/Command/Response     |
+.                               .
+
+
+5. FIELDS
+---------
+
+
+Checksum: bits 0 to 31
+CRC32 checksum of the headers and data (the checksum field MUST NOT be
+included in the checksum calculation).
+
+
+Control bits: bits 32 to 35
+S (SYN) - Synchronize bit
+R (RES) - Response bit 
+C (CRP) - Corruption bit
+A (AUTH) - Authenticate bit
+
+
+Sequence number: bits 36 to 47
+The value can be from 0 to 4095 (decimal)
+
+
+Data: from bit 48
+Data used for performing Diffie-Hellman key exchange, RSA key
+authentication, sending commands and responses. The following JSON
+formats MUST be used:
+
+
+1) Key exchange data:
+{ "modp_id": "<MODP_GROUP_ID>", "pub_key": "<PUBLIC_KEY>" }
+
+
+2) Authentication:
+{ "auth": "<USERNAME>" } #1
+{ "auth_solution": "<SOLUTION>" } #2
+
+
+#1 Client authentication initialization request data
+#2 Client response data to server authentication challenge
+
+
+3) Commands:
+{ "cmd": "<COMMAND>"}
+
+
+Only one command MUST be sent per packet, command options are:
+PWR_STAT - Request power status
+BTRY_LVL - Request battery level
+SUSPND - Suspend command
+REBOOT - Reboot command
+PWROFF - Power off command
+END_CONN - End of connection, server MUST close the socket
+                                                            [ Page 2 ]
+
+
+4) Responses:
+Diffie-Hellman key exchange response:
+{ "pub_key": "<PUBLIC_KEY>" }
+
+
+Authentication response:
+{ "auth_chal": "<BASE_64_CHALLENGE>" }
+{ "ok": "authenticated" }
+
+
+Generic responses:
+{ "ok": "<RESPONSE_DATA>” }
+{ "err": "<ERROR>"}
+
+
+Only one response MUST be sent per packet, error options are:
+BAD_PKT - Received packet is invalid
+BAD_USER - User provided for authentication does not exist
+BAD_AUTH - Client challenge response not accepted or attempted
+BAD_CMD - Invalid command received
+BAD_PERM - User or service has no permission to execute the command
+NOT_SYNCED - User did not initiate communication with SYN
+
+
+6. COMMUNICATION MODEL
+----------------------
+
+
+- 6.1 ABBREVIATIONS USED
+
+
+RT - Retransmit Timer
+UT - Unreachable Timer
+DATA(X) - Data with sequence number X
+CMD(X) - Command with sequence number X
+RES(X) - Response with sequence number X
+CRPT - Corrupted packet
+RSND(X) - Request for retransmitting all packets after X.
+
+
+- 6.2 GENERAL PACKET RULES
+
+
+    Server responses MUST have the RES bit set.
+
+
+- 6.3 KEY EXCHANGE
+
+
+    First, the client and server MUST perform a Diffie-Hellman key
+exchange. To initiate the exchange, the client MUST send a packet
+with a set SYN bit and include the following data in JSON format:
+
+
+1. MODP Group ID
+2. Client public key
+
+
+    The server MUST then calculate its own public key and send it as a
+response:
+
+
+1. Server public key
+
+
+    The exchanged public keys MUST be used to calculate the shared
+secret, whose SHA256 hash MUST be used as the AES CBC key.
+
+
+                                                            [ Page 4 ]
+________________
+
+
+(RT) CLIENT             SERVER
+|=====|-----DATA(0)------>|    #1
+-     |<-----RES(0)-------|    #2 
+#1 Client sends SYN packet with MODP_ID and PUBLIC_KEY
+#2 Server responds with (g^b mod(p))
+
+
+- 6.4 AUTHENTICATION
+
+
+    To authenticate, the client MUST send a packet with a set AUTH bit
+and a username in the data field. The server MUST respond with a base
+64 encoded, randomly generated string that has been encrypted with the
+user’s public key. The client MUST decrypt the message using their
+private key and send it to the server. If the decrypted message
+matches the original, the client is authenticated.
+
+
+(RT) CLIENT             SERVER
+|=====|-----DATA(1)------>|    #1
+-     |<-----RES(1)-------|    #2
+|=====|-----DATA(2)------>|    #3
+-     |<-----RES(2)-------|    #4
+
+
+#1 Client sends AUTH packet with their username
+#2 Server responds with encrypted message (challenge)
+#3 Client decrypts and sends message
+#4 Server responds with generic { "ok": "authenticated" } response
+
+
+- 6.5 COMMANDS
+
+
+    When the server processes a command, it MUST respond with the
+following information, depending on the received command.
+
+
+PWR_STAT - Return power status: Charging, On battery power, etc.
+BTRY_LVL - Return battery percentage or NONE.
+SUSPND - Acknowledge request and wait for 20 sec before suspending.
+REBOOT - Acknowledge request and wait for 20 sec before rebooting.
+PWROFF - Acknowledge request and wait for 20 sec before powering off.
+END_CONN - Acknowledge request and wait for 20 sec before closing the
+connection
+
+
+- 6.6 NO LOSS OR CORRUPTION
+
+
+(RT) CLIENT             SERVER
+|=====|------CMD(0)------>|    #1
+-     |<-----RES(0)-------|    #2
+
+
+#1 Packet 1 is sent to the server
+#2 The server sends a response for packet 1
+
+
+    The server does not concern itself with keeping track of response
+timeouts and retransmitting lost packets. If the client does not
+receive the response it will simply resend the command.
+
+
+                                                            [ Page 4 ]
+________________
+- 6.7 PACKET LOSS HANDLING
+
+
+(RT) CLIENT             SERVER
+|=====|------CMD(0)--X    |    #1
+|     |                   |
+|     |                   |
+|     |                   |
+======|------CMD(0)------>|    #2
+|     |    X-RES(0)-------|    #3
+|     |                   |
+|     |                   |
+======|------CMD(0)------>|    #4
+-     |<-----RES(0)-------|    #5
+
+
+#1 Packet 1 is lost
+#2 Client resends packet 1 on timeout
+#3 Response for packet 1 is sent but lost
+#4 Client resends packet 1 on timeout
+#5 Response for packet 1 is resent and received
+
+
+    The server SHOULD start an Unreachable Timer (UT) before executing
+a command that will render it unable to respond to follow up commands
+(POWEROFF, REBOOT and SUSPEND).
+
+
+    The client SHOULD also start an Unreachable Timer during which if
+a response is not received the server is considered unreachable.
+
+
+    If the server receives a retransmitted command while its
+unreachable timer is running, the server MUST retransmit the response
+and reset the timer.
+
+
+    A situation can occur such that a command is sent by the client
+and received by the server and all following responses and resent
+commands are lost. The server will think all is well and proceed to
+execute the command, while the client will consider the server to be
+unreachable.
+
+
+(UT) (RT) CLIENT             SERVER (UT)
+|=====|=====|------CMD(0)------>|=====|    #1
+|     |     |    X-RES(0)-------|     |    #2
+|     |     |                   |     |
+|     ======|------CMD(0)-X     |     |    #3
+|     |     |                   |     |
+|     |     |                   |     |
+|     ======|------CMD(0)------>|     |    #4
+|     |     |    X-RES(0)-------|     |
+|     |     |                   |     |
+|     ======|------CMD(0)-X     |     |
+============X                   X======    #5
+                                
+#1 Both the server and client start their timers
+#2 Reponse for packet 1 is lost
+#3 Client retransmits packet 1 but is lost
+#4 Server receives retransmitted command, and retransmits response
+#5 Client unreachable timer expires, server marked as unreachable,
+server timer also runs out and it executes the command.
+                                                            [ Page 5 ]
+Result: Command is run but the client has no confirmation of it.
+
+
+Solution: The client MAY ask the server for the last executed
+command when connecting again to check if it was the one that got no
+response.
+
+
+- 6.8 HANDLING DATA CORRUPTION
+
+
+CLIENT             SERVER
+|-------DATA(0)----->|
+|<------RES(0)-------|
+|-------CRPT(1)----->|    #1
+|<------RSND(0)------|    #2
+|-------CMD(1)------>|    #3
+|<------RES(1)-------|    #4
+
+
+#1 Server receives corrupted packet 1
+#2 Client receives request for retransmitting all packets after 0
+#3 Client retransmits packet 1
+#4 Server sends response for packet 1
+
+
+7. SECURITY CONSIDERATIONS
+--------------------------
+
+
+    PMP implements the following security mechanisms:
+
+
+1) Packets are encrypted using AES with shared keys exchanged during
+the Diffie-Hellman key exchange. The prime numbers used to calculate
+the public keys MUST be from MODP groups described in [RFC3526].
+
+
+2) The random 16 byte AES initialization vectors MUST NOT be reused.
+
+
+3) Users MUST authenticate using RSA cryptographic keys.
+
+
+4) Using small response sizes and limiting the number of requests per
+unit of time makes it difficult to perform amplified, reflected
+and other forms of Denial of Service (DoS) attacks.
+
+
+5) The server SHOULD close inactive connections after a reasonable
+amount of time has passed without receiving a packet e.g. 120 seconds.
+
+
+8. REFERENCES
+-------------
+
+
+[RFC0768] Postel, J., "User Datagram Protocol", STD 6, RFC 768, DOI 10.17487/RFC0768, August 1980,
+<https://www.rfc-editor.org/info/rfc768>.
+
+
+[RFC2631] Rescorla, E., "Diffie-Hellman Key Agreement Method",
+RFC 2631, DOI 10.17487/RFC2631, June 1999, <https://www.rfc-editor.org/info/rfc2631>.
+
+
+[RFC2663] Srisuresh, P. and M. Holdrege, "IP Network Address
+Translator (NAT) Terminology and Considerations", RFC 2663, DOI
+10.17487/RFC2663, August 1999,
+<https://www.rfc-editor.org/info/rfc2663>.
+                                                            [ Page 6 ]
+[RFC8017] Moriarty, K., Ed., Kaliski, B., Jonsson, J., and A. Rusch,
+"PKCS #1: RSA Cryptography Specifications Version 2.2", RFC 8017, DOI 10.17487/RFC8017, November 2016,
+<https://www.rfc-editor.org/info/rfc8017>.
+
+
+[RFC3526] Kivinen, T. and M. Kojo, "More Modular Exponential (MODP) Diffie-Hellman groups for Internet Key Exchange (IKE)", RFC 3526, DOI 10.17487/RFC3526, May 2003, <https://www.rfc-editor.org/info/rfc3526>.
+
+
+[RFC3826] Blumenthal, U., Maino, F., and K. McCloghrie, "The Advanced
+Encryption Standard (AES) Cipher Algorithm in the SNMP User-based
+Security Model", RFC 3826, DOI 10.17487/RFC3826, June 2004, <https://www.rfc-editor.org/info/rfc3826>.
+
+
+                                                            [ Page 7 ]
