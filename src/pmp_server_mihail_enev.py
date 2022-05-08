@@ -113,6 +113,7 @@ def deletionThread(address, port):
     while True:
         time.sleep(1)
         if CONN_STATES[address]['TTL'] <= 0:
+            print(f'TIMEOUT: Connection is closed {address[0]}')
             CONN_STATES.pop(address)
             return
         CONN_STATES[address]['TTL'] -= 1

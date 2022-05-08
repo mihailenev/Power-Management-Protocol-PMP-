@@ -142,11 +142,11 @@ def sendAndReceivePacket(sentFlags, sentSeq, client, packet, address):
                 return unpacked
         except socket.timeout:
             if CURRENT_TIMEOUTS <= 0:
-                print(f'Unreachable host {address[0]}:{address[0]}')
+                print(f'Unreachable host {address[0]}:{address[1]}')
                 exit()
             else:
                 CURRENT_TIMEOUTS -= 1
-    print(f'Unreachable host {address[0]}:{address[0]}')
+    print(f'Unreachable host {address[0]}:{address[1]}')
     exit()
 
 # Diffie-Hellman key exchange
