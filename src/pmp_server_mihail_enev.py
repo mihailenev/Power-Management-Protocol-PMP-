@@ -22,13 +22,19 @@ SUSPENDING = False
 SUSPEND_TIME = 10
 BUFFER_SIZE = 4096
 PKT_FLAGS = ['SYN', 'RES', 'CRP', 'AUTH']
-COMMANDS = ['PWR_STAT', 'BTRY_LVL', 'SUSPEND', 'REBOOT', 'PWROFF', 'END_CONN'] # Available commands
+COMMANDS = ['PWR_STAT', 'BTRY_LVL', 'SUSPND', 'REBOOT', 'PWROFF', 'END_CONN'] # Available commands
 
 # Converting the input provided by the client
 def convertInput():
     config = {}
+    while True:
+        auth_res = input('Do you want authentication(Y/N): ').upper().strip()
+        if auth_res == 'Y' or auth_res == 'N':
+            config['optional_auth'] = auth_res == 'Y'
+            break
     config['local_addr'] = input('Server IP: ')
-    config['config_file'] = input('Configuration file: ')
+    if config['optional_auth']:
+        config['config_file'] = input('Configuration file: ')
     return config
 
 # Encrypting using RSA public key
@@ -147,7 +153,7 @@ def cmdCommands(command):
         return 'PLUGGED IN' if battery.power_plugged else 'NOT PLUGGED IN'
     elif command == 'BTRY_LVL':
         return str(f'{battery.percent}%')
-    return '  *SUSPEND, REBOOT and PWROFF are not available for now'
+    return '  *SUSPND, REBOOT and PWROFF are not available for now'
 
 # Diffie-Hellman key exchange
 def keyЕxchange(server, receivedFlags, recv_seq, parsedJson, address):
@@ -279,7 +285,7 @@ def handlePacket(server, packet, address, config_file):
         elif receivedFlags['AUTH']:
             authenticationSequence(server, receivedFlags, receivedSequence, json.loads(decryptAES(unpacked, key)), address, config_file)
             return
-        elif not CONN_STATES[address]['authenticated']:
+        elif not CONN_STATES[address]['authenticated'] and config_file != None:
             print('Client did not provide username or authentication challenge solution')
             serverResponse(server, receivedFlags, receivedSequence+1, {'err': 'BAD_PERM'}, address, key)
             return
@@ -300,7 +306,10 @@ def main():
     config = convertInput()
 
     try:
-        config_file = json.loads(open(config['config_file']).read()) # Load config
+        if config['optional_auth']:
+            config_file = json.loads(open(config['config_file']).read()) # Load config
+        else:
+            config_file = None
     except (UnicodeDecodeError, json.decoder.JSONDecodeError) as e:
         print('Not valid JSON')
         exit(1)

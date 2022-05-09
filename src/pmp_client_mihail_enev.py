@@ -22,9 +22,17 @@ COMMANDS = ['PWR_STAT', 'BTRY_LVL', 'SUSPEND', 'REBOOT', 'PWROFF', 'END_CONN'] #
 # Converting the input provided by the client
 def convertInput():
     config = {}
+    while True:
+        auth_res = input('Do you want authentication(Y/N): ').upper().strip()
+        if auth_res == 'Y' or auth_res == 'N':
+            config['optional_auth'] = auth_res == 'Y'
+            break
+        
+        
     config['local_addr'] = input('Client IP address: ')
-    config['rsa_file'] = input('Identity file: ')
-    config['user'] = input('Username: ')
+    if config['optional_auth']:
+        config['rsa_file'] = input('Identity file: ')
+        config['user'] = input('Username: ')
     config['server_ip'] = input('Server IP: ')
     config['server_port'] = int(input('Server port: '))
     return config
@@ -256,9 +264,10 @@ def main():
     # Calculate AES CBC key as SHA256 hash of the shared secret
     key = hashlib.sha256(diffieHellman(client, address)).digest()
     print('Shared secrets established')
-
-    authenticate(config, client, key)
-    print(f'Successfully authenticated as {config["user"]}')
+    
+    if config['optional_auth']: 
+        authenticate(config, client, key)
+        print(f'Successfully authenticated as {config["user"]}')
     
     printCommands()
     while commandProcessing(client, key, address):
